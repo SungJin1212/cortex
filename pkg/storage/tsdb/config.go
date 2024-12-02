@@ -3,6 +3,7 @@ package tsdb
 import (
 	"flag"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/tsdb/wlog"
+	"github.com/thanos-io/thanos/pkg/exthttp"
 	"github.com/thanos-io/thanos/pkg/store"
 
 	"github.com/cortexproject/cortex/pkg/storage/bucket"
@@ -51,6 +53,8 @@ var (
 	errInvalidOutOfOrderCapMax       = errors.New("invalid TSDB OOO chunks capacity (in samples)")
 	errEmptyBlockranges              = errors.New("empty block ranges for TSDB")
 	errUnSupportedWALCompressionType = errors.New("unsupported WAL compression type, valid types are (zstd, snappy and '')")
+	errInvalidMaxRequests            = errors.New("invalid hedged request max requests, it cannot be negative")
+	errInvalidQuantile               = errors.New("invalid hedged request quantile, it must be between 0 and 1")
 
 	ErrInvalidBucketIndexBlockDiscoveryStrategy = errors.New("bucket index block discovery strategy can only be enabled when bucket index is enabled")
 	ErrBlockDiscoveryStrategy                   = errors.New("invalid block discovery strategy")
@@ -312,6 +316,9 @@ type BucketStoreConfig struct {
 
 	// Token bucket configs
 	TokenBucketBytesLimiter TokenBucketBytesLimiterConfig `yaml:"token_bucket_bytes_limiter"`
+
+	// Hedged Request
+	HedgedRequest HedgedRequestConfig `yaml:"hedged_request"`
 }
 
 type TokenBucketBytesLimiterConfig struct {
@@ -327,12 +334,47 @@ type TokenBucketBytesLimiterConfig struct {
 	TouchedChunksTokenFactor   float64 `yaml:"touched_chunks_token_factor" doc:"hidden"`
 }
 
+type HedgedRequestConfig struct {
+	Enabled     bool    `yaml:"enabled"`
+	MaxRequests uint    `yaml:"max_requests"`
+	Quantile    float64 `yaml:"quantile"`
+}
+
+func (cfg *HedgedRequestConfig) RegisterFlagsWithPrefix(f *flag.FlagSet, prefix string) {
+	f.BoolVar(&cfg.Enabled, prefix+"enabled", false, "If true, hedged requests are applied to object store calls. It can help with reducing tail latency.")
+	f.UintVar(&cfg.MaxRequests, prefix+"max-requests", 3, "Maximum number of hedged requests allowed for each initial request. A high number can reduce latency but increase internal calls.")
+	f.Float64Var(&cfg.Quantile, prefix+"quantile", 0.9, "It is used to calculate a latency threshold to trigger hedged requests. For example, additional requests are triggered when the initial request response time exceeds the 90th percentile.")
+}
+
+func (cfg *HedgedRequestConfig) GetHedgedRequestTransport() func(rt http.RoundTripper) http.RoundTripper {
+	return exthttp.CreateHedgedTransportWithConfig(exthttp.CustomBucketConfig{
+		HedgingConfig: exthttp.HedgingConfig{
+			Enabled:  cfg.Enabled,
+			UpTo:     cfg.MaxRequests,
+			Quantile: cfg.Quantile,
+		},
+	})
+}
+
+func (cfg *HedgedRequestConfig) Validate() error {
+	if cfg.MaxRequests < 0 {
+		return errInvalidMaxRequests
+	}
+
+	if cfg.Quantile > 1 || cfg.Quantile < 0 {
+		return errInvalidQuantile
+	}
+
+	return nil
+}
+
 // RegisterFlags registers the BucketStore flags
 func (cfg *BucketStoreConfig) RegisterFlags(f *flag.FlagSet) {
 	cfg.IndexCache.RegisterFlagsWithPrefix(f, "blocks-storage.bucket-store.index-cache.")
 	cfg.ChunksCache.RegisterFlagsWithPrefix(f, "blocks-storage.bucket-store.chunks-cache.")
 	cfg.MetadataCache.RegisterFlagsWithPrefix(f, "blocks-storage.bucket-store.metadata-cache.")
 	cfg.BucketIndex.RegisterFlagsWithPrefix(f, "blocks-storage.bucket-store.bucket-index.")
+	cfg.HedgedRequest.RegisterFlagsWithPrefix(f, "blocks-storage.bucket-store.hedged-request.")
 
 	f.StringVar(&cfg.SyncDir, "blocks-storage.bucket-store.sync-dir", "tsdb-sync", "Directory to store synchronized TSDB index headers.")
 	f.DurationVar(&cfg.SyncInterval, "blocks-storage.bucket-store.sync-interval", 15*time.Minute, "How frequently to scan the bucket, or to refresh the bucket index (if enabled), in order to look for changes (new blocks shipped by ingesters and blocks deleted by retention or compaction).")
@@ -390,6 +432,12 @@ func (cfg *BucketStoreConfig) Validate() error {
 	if !util.StringsContain(supportedTokenBucketBytesLimiterModes, cfg.TokenBucketBytesLimiter.Mode) {
 		return ErrInvalidTokenBucketBytesLimiterMode
 	}
+
+	err = cfg.HedgedRequest.Validate()
+	if err != nil {
+		return errors.Wrap(err, "hedged-request configuration")
+	}
+
 	return nil
 }
 

@@ -1438,6 +1438,23 @@ blocks_storage:
       # CLI flag: -blocks-storage.bucket-store.token-bucket-bytes-limiter.request-token-bucket-size
       [request_token_bucket_size: <int> | default = 4194304]
 
+    hedged_request:
+      # If true, hedged requests are applied to object store calls. It can help
+      # with reducing tail latency.
+      # CLI flag: -blocks-storage.bucket-store.hedged-request.enabled
+      [enabled: <boolean> | default = false]
+
+      # Maximum number of hedged requests allowed for each initial request. A
+      # high number can reduce latency but increase internal calls.
+      # CLI flag: -blocks-storage.bucket-store.hedged-request.max-requests
+      [max_requests: <int> | default = 3]
+
+      # It is used to calculate a latency threshold to trigger hedged requests.
+      # For example, additional requests are triggered when the initial request
+      # response time exceeds the 90th percentile.
+      # CLI flag: -blocks-storage.bucket-store.hedged-request.quantile
+      [quantile: <float> | default = 0.9]
+
   tsdb:
     # Local directory to store TSDBs in the ingesters.
     # CLI flag: -blocks-storage.tsdb.dir
