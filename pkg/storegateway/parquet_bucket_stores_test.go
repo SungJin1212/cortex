@@ -188,6 +188,9 @@ func TestParquetBucketStoresWithCaching(t *testing.T) {
 
 	// Create storage configuration with caching enabled
 	storageCfg := cortex_tsdb.BlocksStorageConfig{
+		UsersScanner: cortex_tsdb.UsersScannerConfig{
+			Strategy: cortex_tsdb.UserScanStrategyList,
+		},
 		Bucket: bucket.Config{
 			Backend: "filesystem",
 			Filesystem: filesystem.Config{
@@ -221,7 +224,7 @@ func TestParquetBucketStoresWithCaching(t *testing.T) {
 	limits := validation.NewOverrides(validation.Limits{}, nil)
 
 	// Create parquet bucket stores with caching
-	parquetStores, err := newParquetBucketStores(storageCfg, bucketClient, limits, log.NewNopLogger(), prometheus.NewRegistry())
+	parquetStores, err := newParquetBucketStores(storageCfg, NewNoShardingStrategy(log.NewNopLogger(), nil), bucketClient, limits, log.NewNopLogger(), prometheus.NewRegistry())
 	require.NoError(t, err)
 	require.NotNil(t, parquetStores)
 
