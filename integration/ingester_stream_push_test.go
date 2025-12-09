@@ -19,6 +19,57 @@ import (
 	"github.com/cortexproject/cortex/integration/e2ecortex"
 )
 
+func TestReproducePanic(t *testing.T) {
+	s, err := e2e.NewScenario(networkName)
+	require.NoError(t, err)
+	defer s.Close()
+
+	flags := BlocksStorageFlags()
+	flags["-distributor.use-stream-push"] = "true"
+	flags["-distributor.remote-timeout"] = "100ns" // to simulate context cancel due to timeout
+
+	// Start dependencies.
+	consul := e2edb.NewConsul()
+	minio := e2edb.NewMinio(9000, flags["-blocks-storage.s3.bucket-name"])
+	require.NoError(t, s.StartAndWaitReady(consul, minio))
+
+	// Start Cortex components.
+	distributor := e2ecortex.NewDistributor("distributor", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	ingester1 := e2ecortex.NewIngester("ingester-1", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	ingester2 := e2ecortex.NewIngester("ingester-2", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	ingester3 := e2ecortex.NewIngester("ingester-3", e2ecortex.RingStoreConsul, consul.NetworkHTTPEndpoint(), flags, "")
+	require.NoError(t, s.StartAndWaitReady(distributor, ingester1, ingester2, ingester3))
+
+	// Wait until distributor has updated the ring.
+	require.NoError(t, distributor.WaitSumMetricsWithOptions(e2e.Equals(3), []string{"cortex_ring_members"}, e2e.WithLabelMatchers(
+		labels.MustNewMatcher(labels.MatchEqual, "name", "ingester"),
+		labels.MustNewMatcher(labels.MatchEqual, "state", "ACTIVE"))))
+
+	client, err := e2ecortex.NewClient(distributor.HTTPEndpoint(), "", "", "", userID)
+	require.NoError(t, err)
+
+	time.Sleep(5 * time.Second)
+
+	labelsCnt := 25
+	labels := make([]prompb.Label, 0, labelsCnt)
+	for i := range labelsCnt {
+		labels = append(labels, prompb.Label{
+			Name:  fmt.Sprintf("label_%d", i),
+			Value: fmt.Sprintf("value_%d", i),
+		})
+	}
+
+	ticker := time.NewTicker(1 * time.Second)
+	seriesNum := 5000
+	for range ticker.C {
+		now := time.Now()
+		for j := range seriesNum {
+			series, _ := generateSeries(fmt.Sprintf("test_metric_%d", j), now, labels...)
+			_, _ = client.Push(series)
+		}
+	}
+}
+
 func TestIngesterStreamPushConnection(t *testing.T) {
 
 	s, err := e2e.NewScenario(networkName)
