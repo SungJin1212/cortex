@@ -88,6 +88,7 @@
 * [BUGFIX] Compactor: Fix spurious `bucket operation fail after retries` error logs emitted during partial block cleanup. #7749
 * [BUGFIX] Alertmanager: Fix panic in `validateAlertmanagerConfig` when receiver config traversal encounters nil interface values. #7751
 * [BUGFIX] Parquet Converter: Fix `auto_forget_delay` having no effect. The ring lifecycler was created without the auto-forget delegate, so unhealthy instances were never automatically removed from the ring. #7752
+* [BUGFIX] Ingester: Fix tracing of write requests when `-distributor.use-stream-push` is enabled. Every push received over a `PushStream` connection was attached to the span of the connection itself, gluing all of them into a single trace growing for as long as the connection lived. #7753
 
 ## 1.21.1 2026-06-04
 
