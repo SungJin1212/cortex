@@ -610,11 +610,7 @@ func (m *Header) GetValues() []string {
 type StreamWriteRequest struct {
 	TenantID string        `protobuf:"bytes,1,opt,name=TenantID,proto3" json:"TenantID,omitempty"`
 	Request  *WriteRequest `protobuf:"bytes,2,opt,name=Request,proto3" json:"Request,omitempty"`
-	// TraceContext carries the tracing headers of the write request this message
-	// belongs to. The PushStream connection is long lived and shared by many
-	// write requests, so its gRPC metadata only holds the trace context captured
-	// when the stream was opened: the per request trace context has to travel
-	// within each message instead.
+	// TraceContext carries the tracing headers of the write request this message belongs to.
 	TraceContext      []*Header `protobuf:"bytes,3,rep,name=TraceContext,proto3" json:"TraceContext,omitempty"`
 	MessageWithBufRef `protobuf:"bytes,1000,opt,name=Ref,proto3,embedded=Ref,customtype=MessageWithBufRef" json:"Ref"`
 }
